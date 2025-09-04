@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Détection BPM - Flash + LED + MIDI</title>
+<style>
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:16px;
+    padding:24px;
+    background:#121212;
+    color:#eee;
+    position: relative; /* pour positionner le bouton close */
+    -webkit-app-region: drag; /* rendre le body déplaçable */
+    user-select: none; /* éviter la sélection lors du drag */
+    overflow: auto;
+}
+
+h1 {
+    font-size:1.6rem;
+    text-align:center;
+    margin:0;
+}
+
+/* Bouton fermer */
+#closeBtn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 35px;
+    height: 35px;
+    background-color: #d9534f;
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+    z-index: 1000;
+    -webkit-app-region: no-drag; /* important pour permettre le clic */
+}
+
+/* Effet au survol */
+#closeBtn:hover {
+    background-color: #c9302c;
+    transform: scale(1.1) rotate(90deg);
+    box-shadow: 0 5px 10px rgba(0,0,0,0.3);
+}
+
+/* Effet au clic */
+#closeBtn:active {
+    transform: scale(0.95) rotate(90deg);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Style du select */
+#micSelect, select, input[type=range], button {
+    -webkit-app-region: no-drag; /* éléments interactifs ne doivent pas être dragables */
+}
+
+/* Le reste de ton CSS reste inchangé */
+#controls {
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap;
+    justify-content:center;
+    align-items:center;
+}
+
+label {
+    font-size:0.9rem;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+}
+
+input[type=range] {
+    width:180px;
+}
+
+select {
+    padding:6px 8px;
+    border-radius:6px;
+    border:none;
+    font-size:0.9rem;
+    background:#222;
+    color:#eee;
+}
+
+button {
+    padding:8px 16px;
+    font-size:1rem;
+    cursor:pointer;
+    border:none;
+    border-radius:6px;
+    background:#0b6;
+    color:#fff;
+    transition:0.2s;
+}
+
+button:hover {
+    background:#09a;
+}
+
+button:disabled {
+    opacity:0.4;
+    cursor:not-allowed;
+}
+
+#bpm-display {
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:2.2rem;
+    font-weight:700;
+    color:#0b6;
+}
+
+#led {
+    width:50px;
+    height:50px;
+    border-radius:50%;
+    background:#333;
+    margin-top:12px;
+    box-shadow:0 0 6px #000;
+    transition:0.1s;
+}
+
+#led.on {
+    background:#0b6;
+    box-shadow:0 0 20px #0b6;
+}
+
+canvas {
+    border:1px solid #444;
+    width:720px;
+    max-width:95%;
+    height:140px;
+    background:#1a1a1a;
+}
+
+#info {
+    font-size:0.85rem;
+    color:#888;
+    text-align:center;
+    margin-top:4px;
+}
+
+footer {
+    font-size:0.75rem;
+    color:#666;
+    text-align:center;
+    margin-top:12px;
+}
+</style>
+</head>
+<body>
+
+<h1>Détection BPM - Flash + MIDI</h1>
+
+<button id="closeBtn">x</button>
+
+<div id="controls">
+  <select id="micSelect">
+    <option value="">Sélectionnez un micro...</option>
+  </select>
+
+  <button id="startBtn">Démarrer</button>
+  <button id="stopBtn" disabled>Arrêter</button>
+
+  <label>Sensibilité
+    <input type="range" id="sens" min="0.2" max="3.0" step="0.05" value="1.0" />
+  </label>
+
+  <label>Fenêtre (s)
+    <input type="range" id="win" min="4" max="16" step="1" value="8" />
+  </label>
+
+  <div id="bpm-display">
+    <button id="bpmMinus">−</button>
+    <span id="bpm">—</span>
+    <button id="bpmPlus">+</button>
+  </div>
+</div>
+
+<div id="info">Confiance : —</div>
+<div id="led"></div>
+
+<canvas id="acCanvas"></canvas>
+
+<div id="info">
+  ⚠️ LoopMIDI doit être installé pour utiliser la sortie MIDI.  
+  Vous pouvez choisir la source micro dans la liste déroulante.
+</div>
+
+<footer>
+  Méthode : spectral-flux → autocorr → peak picking + harmonics correction.  
+  Sortie MIDI (Note On/Off) compatible avec QLC+.
+</footer>
+
+<script>
+/* === VARIABLES DOM === */
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const sensRange = document.getElementById('sens');
+const winRange = document.getElementById('win');
+const bpmEl = document.getElementById('bpm');
+const confEl = document.querySelectorAll('#info')[0];
+const bpmPlus = document.getElementById('bpmPlus');
+const bpmMinus = document.getElementById('bpmMinus');
+const acCanvas = document.getElementById('acCanvas');
+const led = document.getElementById('led');
+const micSelect = document.getElementById('micSelect');
+const closeBtn = document.getElementById('closeBtn');
+
+/* === BOUTON FERMER === */
+closeBtn.addEventListener('click', () => {
+  window.electronAPI.closeWindow();
+});
+
+/* === AUDIO & MIDI VARIABLES === */
+let audioCtx, analyser, micStream;
+let fftSize = 2048;
+let prevSpectrum = null;
+let envBuffer = [];
+let envRate = 50;
+let hopMs = 1000 / envRate;
+let running = false;
+let winSec = Number(winRange.value);
+let minBPM = 40, maxBPM = 220;
+let bpmHistory = [];
+let bpmOffset = 0;
+let lastBpmDetected = null;
+let loopTimer = null;
+let ledTimer = null;
+let currentLedBpm = null;
+let lastOnsetTime = 0;
+let midiOut = null;
+
+/* === CANVAS === */
+const acCtx = acCanvas.getContext('2d');
+function resizeCanvases() {
+  acCanvas.width = acCanvas.clientWidth * devicePixelRatio;
+  acCanvas.height = acCanvas.clientHeight * devicePixelRatio;
+}
+resizeCanvases();
+window.addEventListener('resize', resizeCanvases);
+
+/* === LISTE MICROPHONES === */
+async function listMicrophones() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const mics = devices.filter(d => d.kind === 'audioinput');
+  micSelect.innerHTML = '';
+  mics.forEach(mic => {
+    const option = document.createElement('option');
+    option.value = mic.deviceId;
+    option.textContent = mic.label || `Microphone ${micSelect.length+1}`;
+    micSelect.appendChild(option);
+  });
+}
+listMicrophones();
+
+/* === MICRO === */
+async function startMicro() {
+  if (!micSelect.value) { alert("Veuillez sélectionner un micro."); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: micSelect.value }});
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    micStream = stream;
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = fftSize;
+    analyser.smoothingTimeConstant = 0.0;
+    src.connect(analyser);
+
+    prevSpectrum = new Float32Array(analyser.frequencyBinCount);
+    envBuffer = [];
+    bpmHistory = [];
+    running = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    loopTimer = setInterval(processFrame, hopMs);
+
+  } catch (e) { console.error(e); alert("Impossible d'ouvrir le micro : " + (e.message || e)); }
+}
+
+function stopMicro() {
+  running = false;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  if (audioCtx && audioCtx.state !== 'closed') audioCtx.close().catch(()=>{});
+  if (micStream) micStream.getTracks().forEach(t => t.stop());
+  if (loopTimer) clearInterval(loopTimer);
+  lastBpmDetected = null;
+  bpmEl.textContent = '—';
+  confEl.textContent = 'Confiance : —';
+  stopLed();
+}
+
+/* === BOUTONS === */
+startBtn.addEventListener('click', startMicro);
+stopBtn.addEventListener('click', stopMicro);
+winRange.addEventListener('input', () => { winSec = Number(winRange.value); });
+bpmPlus.addEventListener('click', ()=>{ bpmOffset += 1; updateDisplayedBPM(); });
+bpmMinus.addEventListener('click', ()=>{ bpmOffset -= 1; updateDisplayedBPM(); });
+
+function updateDisplayedBPM() {
+  if (lastBpmDetected !== null) {
+    const shown = Math.round(lastBpmDetected + bpmOffset);
+    bpmEl.textContent = shown;
+    startLed(shown);
+  }
+}
+
+/* === LED + MIDI === */
+function startLed(bpmValue) {
+  const bpm = bpmValue || 120;
+  if (currentLedBpm === bpm && ledTimer) return;
+  currentLedBpm = bpm;
+  if (ledTimer) clearInterval(ledTimer);
+  const interval = 60000 / bpm;
+  ledTimer = setInterval(()=> flashLed(), interval);
+}
+
+function resyncLed(bpmValue) {
+  const bpm = bpmValue || currentLedBpm || 120;
+  const interval = 60000 / bpm;
+  if (ledTimer) clearInterval(ledTimer);
+  flashLed();
+  ledTimer = setInterval(()=> flashLed(), interval);
+}
+
+function flashLed() {
+  led.classList.add('on');
+  setTimeout(()=>led.classList.remove('on'), 120);
+  sendMidiFlash();
+}
+
+function stopLed() {
+  if (ledTimer) clearInterval(ledTimer);
+  ledTimer = null;
+  currentLedBpm = null;
+  led.classList.remove('on');
+}
+
+/* === MIDI === */
+if (navigator.requestMIDIAccess) {
+  navigator.requestMIDIAccess().then(midiAccess => {
+    const outputs = Array.from(midiAccess.outputs.values());
+    if (outputs.length > 0) midiOut = outputs[0];
+  }, ()=>console.error("Accès MIDI refusé."));
+}
+
+function sendMidiFlash() {
+  if (!midiOut) return;
+  const channel = 0;
+  const note = 60;
+  const velocity = 100;
+  midiOut.send([0x90 + channel, note, velocity]);
+  setTimeout(()=> midiOut.send([0x80 + channel, note, 0]), 100);
+}
+
+/* === TRAITEMENT SIGNAL === */
+function dbToMag(db) { return Math.pow(10, db / 20); }
+
+function processFrame() {
+  if (!running || !analyser) return;
+  const freqCount = analyser.frequencyBinCount;
+  const freqDataDb = new Float32Array(freqCount);
+  analyser.getFloatFrequencyData(freqDataDb);
+
+  const mag = new Float32Array(freqCount);
+  for (let i = 0; i < freqCount; i++) mag[i] = dbToMag(freqDataDb[i]);
+
+  let flux = 0;
+  if (prevSpectrum) {
+    for (let i = 0; i < freqCount; i++) {
+      const diff = mag[i] - prevSpectrum[i];
+      if (diff > 0) flux += diff;
+    }
+  }
+  flux /= freqCount;
+
+  const lowCount = Math.floor(freqCount / 3);
+  let lowSum = 0;
+  for (let i = 0; i < lowCount; i++) lowSum += mag[i];
+  const lowAvg = lowSum / Math.max(1, lowCount);
+  const sens = Number(sensRange.value);
+  let onsetVal = flux * (1 + lowAvg * 2) * sens;
+
+  const last = envBuffer.length ? envBuffer[envBuffer.length - 1] : 0;
+  onsetVal = Math.max(0, onsetVal);
+  onsetVal = 0.6 * last + 0.4 * onsetVal;
+
+  envBuffer.push(onsetVal);
+  prevSpectrum = mag;
+
+  const maxLen = Math.round(envRate * winSec);
+  if (envBuffer.length > maxLen) envBuffer.splice(0, envBuffer.length - maxLen);
+
+  const threshold = 0.25;
+  if (onsetVal > threshold && last < threshold) lastOnsetTime = performance.now();
+
+  if (envBuffer.length >= Math.round(envRate * 2.0)) {
+    const {bpm, confidence} = estimateTempoFromEnv(envBuffer, envRate, minBPM, maxBPM);
+    let finalBpm = refineHarmonics(bpm);
+
+    if (finalBpm && finalBpm > 0) {
+      const maxHistoryLen = envRate * 10;
+      bpmHistory.push(finalBpm);
+      if (bpmHistory.length > maxHistoryLen) bpmHistory.splice(0, bpmHistory.length - maxHistoryLen);
+
+      const meanRecentBPM = bpmHistory.reduce((a,b)=>a+b,0)/bpmHistory.length;
+      if (lastBpmDetected && Math.abs(finalBpm - meanRecentBPM) > 20) {
+        const diff = finalBpm - meanRecentBPM;
+        bpmHistory = bpmHistory.map(v => v + diff*0.5);
+      }
+      lastBpmDetected = median(bpmHistory);
+    }
+
+    if (lastBpmDetected) {
+      if (confidence < 0.3) bpmEl.textContent = "?";
+      else bpmEl.textContent = Math.round(lastBpmDetected + bpmOffset);
+      startLed(Math.round(lastBpmDetected + bpmOffset));
+      confEl.textContent = "Confiance : " + (confidence ? Math.round(confidence*100) + '%' : '—');
+    }
+  }
+
+  drawAutocorr();
+}
+
+function estimateTempoFromEnv(env, rate, minBPM, maxBPM) {
+  const N = env.length;
+  let mean = env.reduce((a,b)=>a+b,0)/N;
+  const x = new Float32Array(N);
+  let energy=0;
+  for(let i=0;i<N;i++){x[i]=env[i]-mean; energy+=x[i]*x[i];}
+  if(energy<=1e-9) return {bpm:null, confidence:0};
+  const maxLag = Math.floor(rate*60/Math.max(1,minBPM));
+  const minLag = Math.max(1, Math.floor(rate*60/maxBPM));
+  let bestLag=-1, bestVal=-Infinity;
+  for(let lag=minLag;lag<=maxLag;lag++){
+    let s=0;
+    for(let i=0;i+lag<N;i++) s+=x[i]*x[i+lag];
+    s/= (N-lag);
+    if(s>bestVal){bestVal=s; bestLag=lag;}
+  }
+  if(bestLag<=0) return {bpm:null, confidence:0};
+  const estBpm=60*rate/bestLag;
+  const confidence = Math.min(1, Math.max(0, bestVal/(energy/N)));
+  return {bpm:estBpm, confidence};
+}
+
+function refineHarmonics(bpm){
+  if(!bpm) return bpm;
+  while(bpm < 40) bpm *= 2;
+  while(bpm > 240) bpm /= 2;
+  const targetBPM = 130;
+  const candidates = [bpm/2, bpm, bpm*2].filter(c => c >= 40 && c <= 240);
+  let best = candidates[0];
+  let bestDist = Math.abs(targetBPM - best);
+  for(const c of candidates){
+    const dist = Math.abs(targetBPM - c);
+    if(dist < bestDist || (dist === bestDist && c > best)) {
+      best = c;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function median(arr){ if(!arr.length) return 0; const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+
+function drawAutocorr(){
+  const acW=acCanvas.width, acH=acCanvas.height;
+  acCtx.clearRect(0,0,acW,acH);
+  const L=envBuffer.length;
+  if(L<2) return;
+  const xArr=envBuffer;
+  let maxVal=1e-9;
+  const ac=new Float32Array(L);
+  for(let lag=0;lag<L;lag++){
+    let s=0;
+    for(let i=0;i+lag<L;i++) s+=xArr[i]*xArr[i+lag];
+    ac[lag]=s;
+    if(s>maxVal) maxVal=s;
+  }
+  acCtx.beginPath();
+  for(let i=0;i<L;i++){
+    const xx=(i/Math.max(1,L-1))*acW;
+    const yy=acH-(ac[i]/maxVal)*acH;
+    i===0? acCtx.moveTo(xx,yy): acCtx.lineTo(xx,yy);
+  }
+  acCtx.strokeStyle='#d9534f';
+  acCtx.stroke();
+}
+</script>
+</body>
+</html>

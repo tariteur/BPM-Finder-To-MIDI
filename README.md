@@ -17,13 +17,11 @@ Avant de commencer, assurez-vous d'avoir installé :
 ---
 
 ## Installation
-
-npm install
+Dépendence :
+`npm install`
 
 Lancer en développement/test :
-
-npm start
+`npm start`
 
 Compiler l'application en fichier exécutable (.exe) :
-
-npm run build
+`npm run build`

@@ -5,6 +5,18 @@ Ce README explique comment configurer, développer et empaqueter l'application.
 
 ---
 
+## Téléchargement
+
+Téléchargez l'application prête à l'emploi pour **Windows** :
+
+[![Télécharger pour Windows](https://img.shields.io/badge/Télécharger-Windows-brightgreen)](https://github.com/tariteur/BPM-Finder-To-MIDI/releases/download/1.0.0/BPM.Finder.to.MIDI.Setup.1.0.0.exe)
+
+Si vous souhaitez compiler manuellement avec le code source :  
+
+[![Code source](https://img.shields.io/badge/Code%20source-GitHub-blue)](https://github.com/tariteur/BPM-Finder-To-MIDI)
+
+---
+
 ## Prérequis
 
 Avant de commencer, assurez-vous d'avoir installé :
@@ -17,7 +29,8 @@ Avant de commencer, assurez-vous d'avoir installé :
 ---
 
 ## Installation
-Dépendence :
+
+Installer les dépendances :  
 `npm install`
 
 Lancer en développement/test :

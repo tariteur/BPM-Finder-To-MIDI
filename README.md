@@ -5,6 +5,8 @@ Ce README explique comment configurer, développer et empaqueter l'application.
 
 ---
 
+<img width="1063" height="889" alt="image" src="https://github.com/user-attachments/assets/2c1f0597-07f4-46fd-8f96-a89652bc844f" />
+
 ## Téléchargement
 
 Téléchargez l'application prête à l'emploi pour **Windows** :
